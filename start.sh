@@ -17,9 +17,11 @@ trap _trap SIGTERM SIGINT
 cat /etc/resolv.google.conf > /etc/resolv.conf
 
 # Start the proxy changer in background
-echo "Starting IP changer..."
-/opt/ip-changer.sh &
-ip_changer_pid=$!
+if [ -z ${JUST_PROXY+x} ] || [ ${JUST_PROXY} -eq 0 ]; then
+    echo "Starting IP changer..."
+    /opt/ip-changer.sh &
+    ip_changer_pid=$!
+fi
 
 # Logging
 tail -F /var/log/squid/cache.log 2>/dev/null &
