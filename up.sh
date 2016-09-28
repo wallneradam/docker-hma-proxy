@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Kill old OpenVPN processes if ther is 3 (fallback)
+# Kill old OpenVPN processes if there are 3 (fallback)
 # Normally it should be impossible, but somehow, it can be occured
 processes=`ps -o etime,pid,comm | grep openvpn | grep -v grep | grep -v watch | sort`
 lc=`echo "$processes" | wc -l`

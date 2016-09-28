@@ -3,11 +3,11 @@
 # Handle signals
 function _trap() {
     echo "Killing HMA proxy..."
-    killall -SIGTERM squid &>/dev/null
-    killall -SIGTERM ip-changer.sh &>/dev/null
-    wait ${ip_changer_pid}
-    wait ${squid_pid}
-    killall -SIGTERM tail
+    if [ ${ip_changer_pid} -ne 0 ]; then kill -SIGTERM ${ip_changer_pid} &>/dev/null; wait ${ip_changer_pid}; fi
+    if [ ${squid_pid} -ne 0 ]; then kill -SIGTERM ${squid_pid} &>/dev/null; wait ${squid_pid}; fi
+    killall -SIGTERM tail &>/dev/null
+    kill -SIGTERM ${logrotate_pid} &>/dev/null
+    echo "HMA proxy exited."
     # 128 + 15 (SIGTERM)
     exit 143
 }
@@ -33,6 +33,10 @@ squid -Nz
 echo "Starting Squid..."
 squid -YCdD
 squid_pid=$!
+echo "OK"
+# Rotate logs ~horly
+(while true; do sleep 3600; squid -k rotate; done) &
+logrotate_pid=$!
 
 # Wait for IP changer to stop
 wait ${ip_changer_pid}
