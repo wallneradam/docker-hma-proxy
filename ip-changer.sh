@@ -6,7 +6,13 @@ REFRESH_SERVER_LIST_INTERVAL=3600
 HMA_LOG_FILE=/var/log/openvpn_hma.log
 HMA_CREDENTIALS_FILE=/tmp/hmalogin
 
+if [ -z ${HMA_COUNTRIES+x} ]; then
+    # Default: european countries
+    HMA_COUNTRIES="at hr cz dk fr de hu ie lu nl no pl ro sk ch gb ua it es lt se gr mt"
+fi
+
 cd "`dirname \"$0\"`"
+
 
 serverList=()
 count=0
@@ -15,9 +21,9 @@ function refreshServerList() {
     grep=""
     for c in ${HMA_COUNTRIES}; do
         if [ "$grep" != "" ]; then grep="$grep\|"; fi
-        grep="$grep\|$c\|"
+        grep="$grep|$c|"
     done
-    curl https://securenetconnection.com/vpnconfig/servers-cli.php 2>/dev/null | grep -i -e "$grep" | grep -i -e "\|udp\|" > /tmp/hma-servers_ 2>/dev/null
+    curl https://securenetconnection.com/vpnconfig/servers-cli.php 2>/dev/null | grep -i -e "$grep" | grep -i -e "|udp|" > /tmp/hma-servers_ 2>/dev/null
     if [ $? -eq 0 ]; then
         serverList_=`cat /tmp/hma-servers_`
         count_=`echo "$serverList_" | wc -l`
@@ -132,12 +138,6 @@ function startNewVPN() {
         echo "ERROR: OpenVPN has not started." >&2
     fi
 }
-
-
-if [ -z ${HMA_COUNTRIES+x} ]; then
-    # Default: european countries
-    HMA_COUNTRIES="at hr cz dk fr de hu ie lu nl no pl ro sk ch gb ua it es lt se gr mt"
-fi
 
 if [ -z ${HMA_USER+x} ]; then
     # Get username from input

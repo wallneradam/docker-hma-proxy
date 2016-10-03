@@ -3,6 +3,7 @@
 import httplib
 import ssl
 import urlparse
+from socket import timeout
 
 from logger import log
 from proxy import ProxyRequestHandler, ThreadingProxyServer
@@ -21,6 +22,7 @@ lastChangedVPNTime = time()
 
 def changeIP(proxyNum):
     global lastChangedVPNNum, lastChangedVPNTime
+    # if time() - lastChangedVPNTime < MIN_PROXY_TIME: return
     os.system('/opt/ip-changer.sh change %i' % (proxyNum + 1))
     lastChangedVPNNum = proxyNum
     lastChangedVPNTime = time()
@@ -33,7 +35,7 @@ class IPChangerThread(Thread):
         self.start()
 
     def run(self):
-        interval = HMA_CHANGE_IP_INTERVAL / 2
+        interval = HMA_CHANGE_IP_INTERVAL
         super(IPChangerThread, self).run()
         while not end:
             now = time()
@@ -45,47 +47,55 @@ class IPChangerThread(Thread):
 class RequestHandler(ProxyRequestHandler):
     @staticmethod
     def forwardThread(queue, proxyNum, path, command, req, req_body):
+        proxy = PROXIES[proxyNum]
         resObj = {
-            'errorCode': 0,
+            'status': 0,
             'errorMessage': None,
             'res': None,
             'res_body': None,
             'proxyNum': proxyNum,
+            'proxy': proxy
         }
-        try:
-            proxy = PROXIES[proxyNum]
-            resObj['proxy'] = proxy
 
-            _proxy = proxy.split(':')
-            proxyHost = _proxy[0]
-            proxyPort = _proxy[1]
+        retry = RETRY
+        timeoutRetry = RETRY_TIMEOUT
+        while retry > 0:
+            try:
+                _proxy = proxy.split(':')
+                proxyHost = _proxy[0]
+                proxyPort = _proxy[1]
 
-            if path.startswith('https://'):
-                conn = httplib.HTTPSConnection(proxyHost, proxyPort, timeout=TIMEOUT)
-            else:
-                conn = httplib.HTTPConnection(proxyHost, proxyPort, timeout=TIMEOUT)
+                if path.startswith('https://'):
+                    conn = httplib.HTTPSConnection(proxyHost, proxyPort, timeout=TIMEOUT)
+                else:
+                    conn = httplib.HTTPConnection(proxyHost, proxyPort, timeout=TIMEOUT)
 
-            conn.request(command, path, req_body, dict(req.headers))
-            res = conn.getresponse()
-            res_body = res.read()
+                conn.request(command, path, req_body, dict(req.headers))
+                res = conn.getresponse()
+                res_body = res.read()
 
-            if res:
-                resObj['res'] = res
-                resObj['res_body'] = res_body
-                if res.status > 400:
-                    resObj['errorCode'] = res.status
-                    resObj['errorMessage'] = res.reason
-                    log.debug('Proxy error: %s Error: %i %s', proxy, res.status, res.reason)
-            else:
-                resObj['errorCode'] = 501
-                resObj['errorMessage'] = 'Unknown error!'
+                if res:
+                    resObj['res'] = res
+                    resObj['res_body'] = res_body
+                    if res.status > 400:
+                        resObj['status'] = res.status
+                        resObj['errorMessage'] = res.reason
+                else:
+                    resObj['status'] = 501
+                    resObj['errorMessage'] = 'Unknown error!'
 
-        except Exception as e:
-            resObj['errorCode'] = 501
-            resObj['errorMessage'] = e.message
+                break
 
-        if resObj['errorCode'] in (403, 407, 429, 501, 502):
-            changeIP(proxyNum)
+            except timeout:
+                timeoutRetry -= 1
+                resObj['status'] = 408
+                resObj['errorMessage'] = 'VPN timeout!'
+
+            except Exception as e:
+                resObj['status'] = 501
+                resObj['errorMessage'] = e.message if e.message else 'Unknown error! (exception)'
+                retry -= 1
+                sleep(RETRY_WAIT)
 
         queue.put(resObj)
 
@@ -119,25 +129,31 @@ class RequestHandler(ProxyRequestHandler):
             thread.daemon = True
             thread.start()
 
-        resObject = None
+        resObj = None
         res_body = res = None
         for _ in range(2):
             try:
-                resObject = queue.get(timeout=TIMEOUT)
-                if resObject['errorCode'] == 0:
-                    res = resObject['res']
-                    res_body = resObject['res_body']
+                resObj = queue.get(timeout=TIMEOUT)
+                res = resObj['res']
+                res_body = resObj['res_body']
+                if resObj['status'] == 0:
                     break
 
             except Empty:
-                resObject = {'errorCode': 408, 'errorMessage': 'Timeout!'}
+                resObj = {'status': 408, 'errorMessage': 'Timeout!'}
                 break
 
-        # If all of them returns with error :-/
-        if resObject['errorCode'] >= 500 or resObject['errorCode'] == 408:  # Error
-            return self.send_error(resObject['errorCode'], resObject['errorMessage'])
+        if resObj['status'] in (403, 407, 429, 500, 501, 502):
+            changeIP(resObj['proxyNum'])
 
-        log.info('Proxy: %s | Request: %s', resObject['proxy'], self.path)
+        # If all of them returns with error :-/
+        if resObj['status'] >= 500 or resObj['status'] in (408, 429):  # Error
+            return self.send_error(resObj['status'], resObj['errorMessage'])
+
+        log.info('Proxy: %i | Status: %i | Request: %s', resObj['proxyNum'] + 1,
+                 res.status if res else resObj['status'], self.path)
+        if not res:
+            return self.send_error(501, 'Unknown error!')
 
         version_table = {10: 'HTTP/1.0', 11: 'HTTP/1.1'}
         setattr(res, 'headers', res.msg)
