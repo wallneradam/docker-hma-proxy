@@ -4,15 +4,18 @@
 # Normally it should be impossible, but somehow, it can be occured
 processes=`ps -o etime,pid,comm | grep openvpn | grep -v grep | grep -v watch | sort`
 lc=`echo "$processes" | wc -l`
-OIFS=$IFS; IFS=$'\n'; processes=(${processes}); IFS=$OIFS
+OIFS=$IFS; IFS=$'\n'; processes=(${processes}); IFS=${OIFS}
 for ((i=2;i<$lc;i++)); do
     process=${processes[$i]}
     pid=`echo "$process" | awk '{print $2}'`
     kill -9 "$pid" &>/dev/null
     upshs=`pidof up.sh`
-    for upid in $upshs; do
-        if [ $upid -ne $$ ]; then
+    # Kill stucked up.sh-s :-/
+    for upid in ${upshs}; do
+        if [ ${upid} -ne $$ ]; then
             kill -9 "$pid"
         fi
     done
 done
+
+# watch -n1 "ps -o etime,pid,comm | grep openvpn | grep -v grep | grep -v watch | sort"

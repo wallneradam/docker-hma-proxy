@@ -1,1 +1,4 @@
-hma.env
+config/hma.env
+*.pyc
+*.pyo
+.idea
