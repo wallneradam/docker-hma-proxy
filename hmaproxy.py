@@ -5,11 +5,13 @@ import ssl
 import urlparse
 from socket import timeout
 
+import sys
+
 from logger import log
 from proxy import ProxyRequestHandler, ThreadingProxyServer
 from conf import *
 from Queue import Queue, Empty
-from threading import Thread
+from threading import Thread, Lock
 import os
 from time import time, sleep
 
@@ -18,14 +20,19 @@ end = False
 HMA_CHANGE_IP_INTERVAL = int(os.getenv('HMA_CHANGE_IP_INTERVAL', 60))  # change IP interval
 lastChangedVPNNum = 0
 lastChangedVPNTime = time()
+ipVersion = 0
+_changeIPLock = Lock()
 
 
-def changeIP(proxyNum):
-    global lastChangedVPNNum, lastChangedVPNTime
-    # if time() - lastChangedVPNTime < MIN_PROXY_TIME: return
-    os.system('/opt/ip-changer.sh change %i' % (proxyNum + 1))
-    lastChangedVPNNum = proxyNum
-    lastChangedVPNTime = time()
+def changeIP(proxyNum, version):
+    global lastChangedVPNNum, lastChangedVPNTime, ipVersion, _changeIPLock
+    _changeIPLock.acquire()
+    if version >= ipVersion:
+        ipVersion += 1
+        os.system('/opt/ip-changer.sh change %i' % (proxyNum + 1))
+        lastChangedVPNNum = proxyNum
+        lastChangedVPNTime = time()
+    _changeIPLock.release()
 
 
 class IPChangerThread(Thread):
@@ -40,7 +47,7 @@ class IPChangerThread(Thread):
         while not end:
             now = time()
             if now - lastChangedVPNTime > interval:
-                changeIP((lastChangedVPNNum + 1) % 2)
+                changeIP((lastChangedVPNNum + 1) % 2, sys.maxint)
             sleep(1)
 
 
@@ -59,7 +66,7 @@ class RequestHandler(ProxyRequestHandler):
 
         retry = RETRY
         timeoutRetry = RETRY_TIMEOUT
-        while retry > 0:
+        while retry > 0 and timeoutRetry > 0:
             try:
                 _proxy = proxy.split(':')
                 proxyHost = _proxy[0]
@@ -115,11 +122,14 @@ class RequestHandler(ProxyRequestHandler):
         scheme, netloc, path = u.scheme, u.netloc, (u.path + '?' + u.query if u.query else u.path)
 
         if scheme not in ('http', 'https'):
-            return self.send_error(502, "Unsupported scheme: %s" % scheme)
+            return self.send_error(501, "Unsupported scheme: %s" % scheme)
 
         if netloc:
             req.headers['Host'] = netloc
         setattr(req, 'headers', self.filter_headers(req.headers))
+
+        # Prevent multiple IP changes on failed requests
+        startIpVersion = ipVersion
 
         # Start threads on different proxies
         queue = Queue()
@@ -131,7 +141,7 @@ class RequestHandler(ProxyRequestHandler):
 
         resObj = None
         res_body = res = None
-        for _ in range(2):
+        for proxyNum in range(2):
             try:
                 resObj = queue.get(timeout=TIMEOUT)
                 res = resObj['res']
@@ -140,11 +150,12 @@ class RequestHandler(ProxyRequestHandler):
                     break
 
             except Empty:
-                resObj = {'status': 408, 'errorMessage': 'Timeout!'}
+                if not resObj:
+                    resObj = {'status': 408, 'errorMessage': 'Timeout!', 'proxyNum': proxyNum}
                 break
 
-        if resObj['status'] in (403, 407, 429, 500, 501, 502):
-            changeIP(resObj['proxyNum'])
+        if resObj['status'] in (403, 407, 408, 429, 500, 501, 502):
+            changeIP(resObj['proxyNum'], startIpVersion)
 
         # If all of them returns with error :-/
         if resObj['status'] >= 500 or resObj['status'] in (408, 429):  # Error
@@ -168,7 +179,7 @@ class RequestHandler(ProxyRequestHandler):
         self.wfile.flush()
 
     def send_error(self, code, message=None):
-        log.error("Error occured: %i %s", code, message)
+        log.error("Error occured: %i %s - Request: %s", code, message, self.path)
 
 
 # Start IP changer thread
