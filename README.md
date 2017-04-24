@@ -1,6 +1,8 @@
 # docker-hma-proxy
 Hide My Ass + Proxy Docker Image
 
+**This project is not continued, because of HMA. They cannot measure the real usage, so if you change servers too often, they will ban you by too many connection. You cannot explain them that everything are according to their terms of service, they don't care. Don't use HMA if you need to change IP address often! They said I need to wait 5mins(!!) between changes.**
+
 It is a Hide My Ass powered proxy server based on Alpine Linux. It connects to a random HMA server with OpenVPN.
 It uses 2 OpenVPN connections and change servers regularly on a specified timeout. Both of the onnections are used
 by their own TinyProxy servers, and there is a Proxy written in python which uses both TinyProxy servers in 
